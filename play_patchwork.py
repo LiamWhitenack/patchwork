@@ -6,6 +6,8 @@ from patchwork_ui import Ui_MainWindow
 import struct
 import pandas as pd
 from random import shuffle
+import math
+from playsound import playsound
 
 # self.MoveAheadButton_p2.setText(_translate("MainWindow", "Move: 1 Space(s)\nReceive: 1 Button(s)"))
 
@@ -52,9 +54,15 @@ class MyMainWindow(QtWidgets.QMainWindow, Ui_MainWindow):
     def __init__(self, parent=None):
         super(MyMainWindow, self).__init__(parent)
         self.setupUi(self)
+        self.create_time_board()
+        
         self.turn = 1
+        self.interrupt = False
         self._translate = QtCore.QCoreApplication.translate
         self.coor = (0,0)
+        self.seven_by_seven_winner = None
+        self.first_finisher = None
+        self.one_patches = [26, 32, 38, 44, 50]
         self.p1_matrix = np.zeros((9,9), dtype=int)
         self.p2_matrix = np.zeros((9,9), dtype=int)
         self.p1_color_matrix = np.zeros((9,9), dtype=tuple)
@@ -65,7 +73,7 @@ class MyMainWindow(QtWidgets.QMainWindow, Ui_MainWindow):
                         self.p2_color_matrix[i][j] = WHITE
         self.patch = np.array((0,0))
 
-        self.inventory = {1:{'buttons':5, 'space':0, 'income':0}, 2:{'buttons':5, 'space':0, 'income':0}}
+        self.inventory = {1:{'buttons':5, 'space':0, 'income':0, 'income_received':0}, 2:{'buttons':5, 'space':0, 'income':0, 'income_received':0}}
 
         self.pieces = [i for i in range(4,35)]
         shuffle(self.pieces)
@@ -101,10 +109,9 @@ class MyMainWindow(QtWidgets.QMainWindow, Ui_MainWindow):
                 if name.startswith(piece_num):
                     self.piece_info[key]['image'] = 'images/' + name
 
-        # for key in time_space:
-        #     time_space[key]['contents'] = time_space[key]['space_coor']
+        self.piece_info[0] = {'cost': 0, 'time': 0, 'income': 0, 'color': (150, 75, 0), 'shape': np.array(([1]), int)}
 
-        self.piece_info[3]['shape'] = np.array(([1,1]))
+        self.piece_info[3]['shape'] = np.ones((7,7), int)
         self.piece_info[4]['shape'] = np.array(([1,1], [0,1]))
         self.piece_info[5]['shape'] = np.array(([1,1], [0,1]))
         self.piece_info[6]['shape'] = np.array(([1,1,1]))
@@ -158,6 +165,9 @@ class MyMainWindow(QtWidgets.QMainWindow, Ui_MainWindow):
     
     def keyPressEvent(self, event):
         # if a certain button is pressed, move in that direction
+        if not 1 in self.patch:
+            return
+
         if len(self.patch.shape) == 1:
             self.patch = self.patch[np.newaxis]
 
@@ -225,29 +235,94 @@ class MyMainWindow(QtWidgets.QMainWindow, Ui_MainWindow):
             return True
         else:
             return False
+
+    def advance_spaces(self, spaces:int, take_away:int = False):
+        
+        if self.one_patches:
+            if self.inventory[self.turn]['space'] + spaces >= self.one_patches[0]:
+                self.interrupt = True
+                del self.one_patches[0]
+                self.patch = np.array([1], int)
+                self.patch_color = (150, 75, 0)
+                self.piece_num = 0
+                self.revert_to_colors()
+                self.patch = self.piece_info[self.piece_num]['shape']
+                self.coor = (0,0)
+                self.patch_color = self.piece_info[self.piece_num]['color']
+                self.color_quilt_with_patch(self.patch_color)
+
+        if self.inventory[self.turn]['space'] + spaces < 53:
+            self.inventory[self.turn]['space'] += spaces
+            return
+        if take_away and self.inventory[self.turn]['space'] + spaces > 53:
+            self.inventory[self.turn]['buttons'] -= 1
+        self.inventory[self.turn]['space'] = 53
+
+        if not self.first_finisher:
+            self.first_finisher = self.turn
+        if self.turn == 1:
+            self.MoveAheadButton_p1.setGeometry(QtCore.QRect(636, 30, 0, 0))
+            self.PlacePieceButton_p1.setGeometry(QtCore.QRect(636, 30, 0, 0))
+            self.DownloadInstructionsButton_p1.setGeometry(QtCore.QRect(636, 30, 0, 0))
+        if self.turn == 2:
+            self.MoveAheadButton_p2.setGeometry(QtCore.QRect(636, 30, 0, 0))
+            self.PlacePieceButton_p2.setGeometry(QtCore.QRect(636, 30, 0, 0))
+            self.DownloadInstructionsButton_p2.setGeometry(QtCore.QRect(636, 30, 0, 0))
+        
     
     def buy_piece(self):
+        if self.interrupt:
+            self.interrupt = False
+            return
+
         cost = self.piece_info[self.piece_num]['cost']
         spaces = self.piece_info[self.piece_num]['time']
         income = self.piece_info[self.piece_num]['income']
         self.inventory[self.turn]['income'] += income
         self.inventory[self.turn]['buttons'] -= cost
-        self.inventory[self.turn]['space'] += spaces
+        self.advance_spaces(spaces)
         self.pieces.remove(self.piece_num)
-        self.pieces = rotate(self.pieces,self.option_num)
+        self.pieces = rotate(self.pieces, self.option_num)
+        self.receive_income()
         self.delete_shapes()
         self.create_shapes()
 
-        self.inventory_p2.setText(self._translate("MainWindow", "Income: 0\nButtons: 5\nTime Spaces\nRemaining: 54"))
-
     def receive_income(self):
-        self.buttons += self.income
+        space = self.inventory[self.turn]['space']
+        received = self.inventory[self.turn]['income_received']
+        income = self.inventory[self.turn]['income']
+
+        if math.floor(space / 6) < received:
+            self.inventory[self.turn]['buttons'] += income
     
     def move_and_collect(self):
-        
-        pass
+
+        if self.interrupt:
+            return
+
+        if self.patch is self.piece_info[0]['shape']:
+            return
+
+        spaces = abs(self.inventory[self.turn]['space'] - self.inventory[3 - self.turn]['space']) + 1
+        self.inventory[self.turn]['buttons'] += spaces
+        self.coor = (0,0)
+        self.ErrorMessage_p1.setText(self._translate("MainWindow", ""))
+        self.ErrorMessage_p2.setText(self._translate("MainWindow", ""))
+        self.patch = np.array([0])
+        self.advance_spaces(spaces, True)
+        self.update_time_board()
+        self.update_turn()
+        self.receive_income()
+
+        playsound(u'sounds/move_piece.mp3')
 
     def place_piece(self):
+
+        if not 1 in self.patch:
+            self.ErrorMessage_p1.setText(self._translate("MainWindow", "Select a Piece First"))
+            self.ErrorMessage_p2.setText(self._translate("MainWindow", "Select a Piece First"))
+            return
+
         if 2 in self.add_patch_to_matrix():
             self.ErrorMessage_p1.setText(self._translate("MainWindow", "Invalid Placement"))
             self.ErrorMessage_p2.setText(self._translate("MainWindow", "Invalid Placement"))
@@ -270,8 +345,12 @@ class MyMainWindow(QtWidgets.QMainWindow, Ui_MainWindow):
         self.ErrorMessage_p1.setText(self._translate("MainWindow", ""))
         self.ErrorMessage_p2.setText(self._translate("MainWindow", ""))
 
+        self.patch = np.array([0])
+        playsound(u'sounds/place_piece.mp3')
+
         # print(self.p1_color_matrix, self.p2_color_matrix)
         self.buy_piece()
+        self.update_time_board()
         self.update_turn()
 
     def download_instructions(self):
@@ -296,7 +375,6 @@ class MyMainWindow(QtWidgets.QMainWindow, Ui_MainWindow):
             return self.p2_color_matrix
 
     def change_tabs(self, num):
-        print("tab should change")
         self.MainWindow_2.setCurrentIndex(num)
 
     def color_cell(self, coor:tuple, color:tuple):
@@ -353,19 +431,11 @@ class MyMainWindow(QtWidgets.QMainWindow, Ui_MainWindow):
         else:
             return self.p2_time
     
-    def move_active_piece(self, spaces):
-        item = QtWidgets.QTableWidgetItem()
-        item.setTextAlignment(QtCore.Qt.AlignCenter) # type: ignore
-        icon = QtGui.QIcon()
-        item.setIcon(icon)
-        if self.turn == 1:
-            icon.addPixmap(QtGui.QPixmap("images/p1-piece.png"), QtGui.QIcon.Normal, QtGui.QIcon.Off) # type: ignore
-            self.p1_time += spaces
-            self.time_board.setItem(time_space['space_coor'][self.p1_time], item)
-        else:
-            icon.addPixmap(QtGui.QPixmap("images/p2-piece.png"), QtGui.QIcon.Normal, QtGui.QIcon.Off) # type: ignore
-            self.p2_time += spaces
-            self.time_board.setItem(time_space['space_coor'][self.p2_time], item)
+    def update_time_board(self):
+        p1_coor = time_space[self.inventory[1]['space']]['space_coor']
+        p2_coor = time_space[self.inventory[2]['space']]['space_coor']
+        self.delete_time_board()
+        self.create_time_board(p1_coor, p2_coor, self.turn, 5 - len(self.one_patches))
 
     def create_shapes(self):
         
@@ -419,22 +489,116 @@ class MyMainWindow(QtWidgets.QMainWindow, Ui_MainWindow):
         for i in reversed(range(self.verticalLayout_2.count())):
             self.verticalLayout_2.itemAt(i).widget().setParent(None)
 
+    def update_text(self):
+        spaces = abs(self.inventory[self.turn]['space'] - self.inventory[3 - self.turn]['space']) + 1
+        if spaces > 1:
+            s = 's'
+        else:
+            s = ''
+
+        distance_p1 = 5 - (self.inventory[1]['space'] % 6)
+        distance_p2 = 5 - (self.inventory[2]['space'] % 6)
+        if not distance_p1:
+            distance_p1 = 6
+        if not distance_p2:
+            distance_p2 = 6
+
+        self.MoveAheadButton_p1.setText(self._translate("MainWindow", "Move: {} Space{}\nReceive: {} Button{}".format(spaces, s, spaces, s)))
+        self.MoveAheadButton_p2.setText(self._translate("MainWindow", "Move: {} Space{}\nReceive: {} Button{}".format(spaces, s, spaces, s)))
+        self.inventory_p1.setText(self._translate("MainWindow", "Income: {}\nButtons: {}\nTime Spaces\nRemaining: {}\nDistance from Nearest\nIncome: {}".format(\
+            self.inventory[1]['income'], self.inventory[1]['buttons'], 53 - self.inventory[1]['space'], distance_p1)))
+        self.inventory_p2.setText(self._translate("MainWindow", "Income: {}\nButtons: {}\nTime Spaces\nRemaining: {}\nDistance from Nearest\nIncome: {}".format(\
+            self.inventory[2]['income'], self.inventory[2]['buttons'], 53 - self.inventory[2]['space'], distance_p2)))
+
     def update_turn(self):
-        self.option1.setChecked(False)
-        self.option2.setChecked(False)
-        self.option3.setChecked(False)
+
+        self.check_7x7()
+
+        if self.interrupt:
+            if self.turn == 1:
+                self.turn_marker_p1.setText(self._translate("MainWindow", "Place 1 by 1 Piece".format(str(self.turn))))
+                self.turn_marker_p2.setText(self._translate("MainWindow", "Player 1\'s Turn".format(str(self.turn))))
+            else:
+                self.turn_marker_p1.setText(self._translate("MainWindow", "Player 2\'s Turn".format(str(self.turn))))
+                self.turn_marker_p2.setText(self._translate("MainWindow", "Place 1 by 1 Piece".format(str(self.turn))))
+            return
+        
+        if self.inventory[self.turn]['space'] < self.inventory[3 - self.turn]['space']:
+            self.update_text()
+            return
+        
+        if self.inventory[1]['space'] == 53 and self.inventory[2]['space'] == 53:
+            self.end_game()
+            return
 
         self.turn = 3 - self.turn
-        if self.turn == 1:
-                self.turn_marker_p1.setText(self._translate("MainWindow", "Player 1\'s Turn"))
-                self.turn_marker_p2.setText(self._translate("MainWindow", "Player 1\'s Turn"))
-                self.turn_marker_board.setText(self._translate("MainWindow", "Player 1\'s Turn"))
-                self.change_tabs(0)
+        self.update_text()
+
+        self.turn_marker_p1.setText(self._translate("MainWindow", "Player {}\'s Turn".format(str(self.turn))))
+        self.turn_marker_p2.setText(self._translate("MainWindow", "Player {}\'s Turn".format(str(self.turn))))
+        self.turn_marker_board.setText(self._translate("MainWindow", "Player {}\'s Turn".format(str(self.turn))))
+        self.change_tabs(self.turn - 1)
+
+    def check_7x7(self):
+        if self.seven_by_seven_winner:
+            return
+
+        for i in range(3):
+            for j in range(3):
+                if not 0 in self.p1_matrix[i:7+i, j:7+j]:
+                    self.seven_by_seven_winner = 1
+                    return
+                if not 0 in self.p2_matrix[i:7+i, j:7+j]:
+                    self.seven_by_seven_winner = 2
+                    return
+    
+    def calculate_final_score(self):
+        p1_score = np.sum(self.p1_matrix) * 2 - 162 + self.inventory[1]['buttons'] + (7 if self.seven_by_seven_winner == 1 else 0)
+        p2_score = np.sum(self.p2_matrix) * 2 - 162 + self.inventory[2]['buttons'] + (7 if self.seven_by_seven_winner == 2 else 0)
+        return p1_score, p2_score
+
+    def end_game(self):
+        self.delete_shapes()
+        p1_score, p2_score = self.calculate_final_score()
+        if p1_score > p2_score:
+            self.win(1)
+        elif p1_score < p2_score:
+            self.win(2)
         else:
-                self.turn_marker_p1.setText(self._translate("MainWindow", "Player 2\'s Turn"))
-                self.turn_marker_p2.setText(self._translate("MainWindow", "Player 2\'s Turn"))
-                self.turn_marker_board.setText(self._translate("MainWindow", "Player 2\'s Turn"))
-                self.change_tabs(1)
+            self.win(self.first_finisher)
+
+
+        # delete all buttons?
+
+    def win(self, player:int):
+        playsound(u'sounds/win.mp3')
+        player = str(player)
+
+        message = "Player {} wins!!".format(player)
+        self.turn_marker_p1.setText(self._translate("MainWindow", message))
+        self.turn_marker_p2.setText(self._translate("MainWindow", message))
+        self.turn_marker_board.setText(self._translate("MainWindow", message))
+
+        self.inventory_p1.setGeometry(QtCore.QRect(636, 30, 250, 250))
+        self.inventory_p2.setGeometry(QtCore.QRect(636, 30, 250, 250))
+
+        inventory_p1_message = "Buttons lost from empty\nspaces: {}\n".format(abs(np.sum(self.p1_matrix) * 2 - 162)) + \
+            "Buttons in inventory: {}\n".format(self.inventory[1]['buttons']) + \
+                'Buttons from completing a\n7x7 square first: {}\n'.format(7 if self.seven_by_seven_winner == 1 else 0) + \
+                "Final Score: {}".format(self.calculate_final_score()[0])
+        inventory_p2_message = "Buttons lost from empty\nspaces: {}\n".format(abs(np.sum(self.p2_matrix) * 2 - 162)) + \
+            "Buttons in inventory: {}\n".format(self.inventory[2]['buttons']) + \
+                'Buttons from completing a\n7x7 square first: {}\n'.format(7 if self.seven_by_seven_winner == 2 else 0) + \
+                "Final Score: {}".format(self.calculate_final_score()[1])
+
+        self.inventory_p1.setText(self._translate("MainWindow", inventory_p1_message))
+        self.inventory_p2.setText(self._translate("MainWindow", inventory_p2_message))
+        
+        # print('player {} wins!'.format(player))
+
+
+
+
 
 if __name__ == '__main__':
     import sys
