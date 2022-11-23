@@ -111,7 +111,7 @@ class MyMainWindow(QtWidgets.QMainWindow, Ui_MainWindow):
 
         self.piece_info[0] = {'cost': 0, 'time': 0, 'income': 0, 'color': (150, 75, 0), 'shape': np.array(([1]), int)}
 
-        self.piece_info[3]['shape'] = np.ones((7,7), int)
+        self.piece_info[3]['shape'] = np.array([[1,1]])
         self.piece_info[4]['shape'] = np.array(([1,1], [0,1]))
         self.piece_info[5]['shape'] = np.array(([1,1], [0,1]))
         self.piece_info[6]['shape'] = np.array(([1,1,1]))
